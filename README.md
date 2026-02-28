@@ -1,125 +1,230 @@
 # Voice → Text CLI (faster-whisper)
 
-CLI tool for speech-to-text transcription using **faster-whisper**.
-Supports two modes:
+Современный CLI-инструмент для высококачественной транскрибации аудио/видео в текст на базе **faster-whisper**. 
 
-- **PROD**: practical transcription (single run) with caching into CSV + `.txt`
-- **BENCH**: benchmark matrix (compute/threads/workers/beam/patience/vad, etc.),
-  optional WER/CER scoring with a reference text, and best config selection:
-  **most accurate first, then fastest**
+Поддерживает два режима:
+- **PROD** — быстрая практическая транскрипция одного файла с надёжным кешем.
+- **BENCH** — полный перебор матрицы параметров (compute, threads, workers, beam, patience, vad), автоматический скоринг WER/CER и выбор лучшей конфигурации по точности → скорости.
 
-## Requirements
+Проект реализован по принципам **Clean Architecture**: Domain ← Application ← Infrastructure. Все зависимости инвертированы через порты, composition root находится в CLI-entrypoint.
 
-You need external tools installed:
+---
 
+### Возможности
+
+- Поддержка локальных файлов и YouTube-ссылок (через yt-dlp)
+- Автоматическая нормализация аудио → 16 kHz mono PCM WAV (ffmpeg)
+- Строгий детерминированный кеш на основе `run_key`
+- SQLite-репозиторий (runs.sqlite / bench.sqlite) для метрик и кеша
+- BENCH: генерация матрицы параметров, устойчивость к падениям, Ctrl+C
+- BENCH: скоринг WER/CER через jiwer (при наличии ref.txt)
+- BENCH: автоматический выбор лучшей конфигурации
+- Полная логика в домене, инфраструктура — только адаптеры
+- Поддержка CPU (int8/float16) и CUDA
+
+---
+
+### Архитектура и слои
+
+```text
+Domain          ← Application     ← Infrastructure
+(models,        (prod_service,    (sqlite_repo,
+ ports,          bench_service,    whisper_engine,
+ run_logic)      matrix, scoring)  target_preparer, ...)
+```
+
+- **Domain** владеет контрактами (`RunRepository`, `TranscribeEngine`, `TargetPreparer`).
+- **Application** оркестрирует бизнес-сценарии.
+- **Infrastructure** предоставляет конкретные реализации.
+- **CLI** — единственная точка сборки зависимостей (composition root).
+
+---
+
+### Требования
+
+**Python**: 3.12+
+
+**Системные утилиты** (должны быть в PATH):
 - `ffmpeg` + `ffprobe`
-- `yt-dlp` (only if you use YouTube URLs as targets)
+- `yt-dlp` (только для YouTube-ссылок)
 
-Python deps:
-- `faster-whisper`
-- `pydantic`
-- `pydantic-settings`
-- `jiwer` (only used for bench scoring)
-
-## Project structure
-
-- `main_app/core/` — shared core (targets prep, runner, CSV store, external tools)
-- `main_app/prod/` — prod module (transcribe + caching)
-- `main_app/bench/` — bench module (matrix, scoring, best selection)
-- `main_app/settings/` — `Settings()` (argv/env/defaults), no argparse
-- `main_app/app/` — entrypoint + logging config
-
-## Usage
-
-### PROD mode
-
+**Python-зависимости**:
 ```bash
-python main.py --mode prod --target /path/to/audio.mp3 --out-dir ./out
-````
-
-You can also use a YouTube URL:
-
-```bash
-python main.py --mode prod --target "https://youtu.be/..." --out-dir ./out
+uv pip install faster-whisper jiwer pydantic pydantic-settings
 ```
 
-### BENCH mode
+---
 
-Minimal bench run:
+### Установка
 
 ```bash
-python main.py --mode bench --target /path/to/audio.mp3 --out-dir ./out --bench.sample-seconds 60
+git clone https://github.com/yourname/voice-to-text-cli.git
+cd voice-to-text-cli
+
+# Рекомендуется uv
+uv sync          # или uv pip install -e .
+uv run python main.py --help
 ```
 
-Bench with scoring:
+---
+
+### Быстрый старт
+
+#### PROD-режим (практическая транскрипция)
 
 ```bash
-python main.py --mode bench --target /path/to/audio.mp3 --out-dir ./out \
+# Локальный файл
+uv run python main.py --mode prod --target ./my_audio.mp3 --out-dir ./out
+
+# YouTube
+uv run python main.py --mode prod --target "https://youtu.be/..." --out-dir ./out
+```
+
+#### BENCH-режим (бенчмарк)
+
+```bash
+uv run python main.py --mode bench \
+  --target ./my_audio.mp3 \
+  --out-dir ./out \
   --bench.sample-seconds 60 \
   --bench.ref ./ref.txt
 ```
 
-Override matrix parameters (comma-separated lists):
+Пример переопределения матрицы:
 
 ```bash
-python main.py --mode bench --target /path/to/audio.mp3 --out-dir ./out \
+uv run python main.py --mode bench \
+  --target ./audio.wav \
   --bench.threads 4,8,12 \
-  --bench.workers 1,2 \
-  --bench.computes int8,float16 \
   --bench.beams 1,5,10 \
-  --bench.patiences 1.0,1.2 \
-  --bench.vads false,true
+  --bench.vads false,true \
+  --bench.ref ./ref.txt
 ```
 
-Override whisper settings:
+---
+
+### Конфигурация
+
+Настройки читаются в порядке приоритета:
+1. CLI-аргументы (`--whisper.threads 12`)
+2. Переменные окружения (`VOICE2TEXT__WHISPER__THREADS=12`)
+3. Значения по умолчанию
+
+**Примеры ENV**:
 
 ```bash
-python main.py --mode prod --target /path/to/audio.mp3 --out-dir ./out \
-  --whisper.model large-v3 \
-  --whisper.device cpu \
-  --whisper.threads 10 \
-  --whisper.workers 2 \
-  --whisper.beam_size 10 \
-  --whisper.patience 1.0 \
-  --whisper.vad true \
-  --whisper.lang auto
+export VOICE2TEXT__MODE=bench
+export VOICE2TEXT__TARGET=/path/to/audio.wav
+export VOICE2TEXT__OUT_DIR=./results
+export VOICE2TEXT__WHISPER__MODEL=large-v3
+export VOICE2TEXT__BENCH__SAMPLE_SECONDS=90
 ```
 
-## Environment variables
+Полный список параметров — в `voice_to_text__app/infrastructure/config/settings.py`.
 
-All settings can be provided via env variables using prefix:
+---
 
-* `VOICE2TEXT__MODE`
-* `VOICE2TEXT__TARGET`
-* `VOICE2TEXT__OUT_DIR`
-* `VOICE2TEXT__WHISPER__THREADS`
-* `VOICE2TEXT__BENCH__SAMPLE_SECONDS`
+### Выходные артефакты (`out_dir`)
 
-Nested delimiter is `__`.
+```
+out/
+├── prepared/               # нормализованные 16k mono WAV
+├── sample/                 # сэмплы для BENCH (если включён)
+├── *.txt                   # результаты транскрипции
+├── runs.sqlite             # PROD (или bench.sqlite)
+└── (для BENCH) wer/cer обновляются в БД
+```
 
-Example:
+---
+
+### Кеширование и детерминизм
+
+Ключ кеша (`run_key`) формируется из:
+`target_id | model | device | compute_type | thr= | wrk= | beam= | pat= | vad= | lang=`
+
+**Строгий кеш** считается валидным, только если:
+- файл `.txt` существует
+- запись с этим `run_key` присутствует в SQLite
+
+---
+
+### BENCH: выбор лучшей конфигурации
+
+Алгоритм `pick_best`:
+1. Игнорирует `failed` прогоны
+2. Если есть WER/CER → сортировка: **WER → CER → wall_time → RTF**
+3. Если скоринга нет → **wall_time → RTF**
+
+Результат выводится в лог в конце бенча.
+
+---
+
+### Известные нюансы
+
+- VAD работает, но на некоторых системах может потребовать дополнительных onnxruntime зависимостей.
+- При смене `--bench.sample-seconds` старые сэмплы не переиспользуются (новый target_id).
+- BENCH всегда использует `device=cpu` (как задумано в матрице).
+- `jiwer` требуется только при `--bench.ref`.
+
+---
+
+### Project layout
+
+```
+voice_to_text__app/
+├── domain/              # модели, исключения, run_logic, порты
+├── application/
+│   ├── bench/           # bench_service, matrix, scoring, selection
+│   └── prod/            # prod_service
+├── infrastructure/
+│   ├── audio/           # targets, media, process (ffmpeg/yt-dlp)
+│   ├── cli/             # entrypoint, logging, cli_source
+│   ├── config/          # settings, pydantic-settings
+│   ├── sqlite/          # schema + SqliteRunRepository
+│   └── whisper/         # WhisperEngine (lifecycle)
+├── main.py
+├── pyproject.toml
+└── uv.lock
+```
+
+---
+
+### Дорожная карта (Roadmap)
+
+- [ ] Полная поддержка extras в pyproject.toml (faster-whisper, jiwer)
+- [ ] Интеграция в больший AI-пайплайн (Telegram → RabbitMQ → Worker → LLM-postprocessing)
+- [ ] Docker-образ и GitHub Actions
+- [ ] Поддержка batch-режима и Postgres (опционально)
+- [ ] Версионирование транскриптов + постобработка LLM
+
+Текущая версия — стабильная архитектурная основа (Stage 4 по внутренним SSD-документам).
+
+---
+
+### Лицензия
+
+TBD (MIT / Apache 2.0 — выберите при публикации)
+
+---
+
+### Разработка
 
 ```bash
-export VOICE2TEXT__MODE=prod
-export VOICE2TEXT__TARGET=/path/to/audio.mp3
-export VOICE2TEXT__OUT_DIR=./out
-export VOICE2TEXT__WHISPER__THREADS=12
-python main.py
+uv sync --dev          # если добавите dev-зависимости
+uv run ruff check .    # (при наличии ruff)
+uv run python main.py --mode bench --target ... 
 ```
 
-## Output files
+Pull-request'ы приветствуются. Перед отправкой убедитесь, что:
+- тесты проходят (пока тестов нет — планируются)
+- код соответствует структуре слоёв
+- новые фичи проходят через порты домена
 
-In `--out-dir`:
+---
 
-* `prepared/` — normalized WAV 16k mono
-* `runs.csv` — PROD results and cache index
-* `bench_results.csv` — BENCH results and cache index
-* `*.txt` — transcripts (one for prod, many for bench)
-* `sample/` — bench samples (`*_sample_N.wav`)
+**Готовы к использованию в продакшен-пайплайнах и исследовательским бенчмаркам.**  
+Звёздочка на GitHub очень мотивирует ❤️
 
-## Notes
+---
 
-* PROD caching is strict: cached only if both `.txt` exists and the run key exists in CSV.
-* BENCH uses the same strict caching logic per configuration.
-* `jiwer` is only used when `--bench.ref` exists.
-
+*Проект развивался поэтапно (см. исторические SSD__*.md в репозитории). Текущая версия — чистая, расширяемая архитектурная система.*
