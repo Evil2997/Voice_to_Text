@@ -13,16 +13,15 @@ def iter_matrix(base_cfg: TranscribeConfig, *, settings: Settings):
         for thr in b.threads:
             for wrk in b.workers:
                 for beam in b.beams:
-                    for pat in b.patiences:
-                        for vad in b.vads:
-                            yield base_cfg.model_copy(
-                                update={
-                                    "device": "cpu",
-                                    "compute_type": compute,
-                                    "threads": thr,
-                                    "workers": wrk,
-                                    "beam_size": beam,
-                                    "patience": pat,
-                                    "vad": vad,
-                                }
-                            )
+                    for vad in b.vads:
+                        yield base_cfg.model_copy(
+                            update={
+                                "device": "cpu",
+                                "compute_type": compute,
+                                "threads": thr,
+                                "workers": wrk,
+                                "beam_size": beam,
+                                "patience": b.patiences,
+                                "vad": vad,
+                            }
+                        )

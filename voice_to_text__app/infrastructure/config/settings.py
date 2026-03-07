@@ -33,9 +33,9 @@ class BenchSettings(BaseModel):
     vads: tuple[bool, ...] = (False,)
 
     threads: tuple[int, ...] = (4, 6, 8, 10, 12)
-    workers: tuple[int, ...] = (1, 2, 4)
-    beams: tuple[int, ...] = (1, 5, 10, 15)
-    patiences: tuple[float, ...] = (1.0, 1.2, 2.0)
+    workers: tuple[int, ...] = (1, 2, 3, 4, 5)
+    beams: tuple[int, ...] = (1, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15)
+    patiences: float = 1.0
 
 
 class Settings(BaseSettings):
