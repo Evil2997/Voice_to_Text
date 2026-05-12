@@ -1,14 +1,39 @@
-# Python-generated files
+# Environment
+.venv/
+.python-version
+
+# Runtime workspace (generated data, not source code)
+workspace/
+out/
+
+# Audio files
+*.wav
+*.mp3
+*.mp4
+*.m4a
+*.ogg
+*.flac
+*.webm
+
+# Transcription results and databases
+*.txt
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# Personal notes / AI chat exports
+SSD/
+SSD_*.md
+SSD__*.md
+
+# IDE
+.idea/
+.vscode/
+
+# Python
 __pycache__/
-*.py[oc]
-build/
+*.py[cod]
+*.egg-info/
 dist/
-wheels/
-*.egg-info
-.idea
-
-# Virtual environments
-.venv
-
-# ---
-.env
+build/
+.ruff_cache/
