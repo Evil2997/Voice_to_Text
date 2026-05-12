@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from voice_to_text__app.infrastructure.config.cli_source import parse_argv
+from voice_to_text__app.paths import DEFAULT_WORKSPACE_DIR
 
 Mode = Literal["prod", "bench"]
 
@@ -51,10 +52,9 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # общие
     mode: Mode = "prod"
-    target: str = ""  # для CLI обязателен, но валидируем в entrypoint при желании
-    out_dir: Path = Path("./out")
+    target: str = ""
+    out_dir: Path = DEFAULT_WORKSPACE_DIR
     log_level: str = "INFO"
 
     whisper: WhisperSettings = WhisperSettings()
@@ -72,5 +72,4 @@ class Settings(BaseSettings):
         def cli_settings() -> dict[str, Any]:
             return parse_argv()
 
-        # CLI должен иметь приоритет над env/дефолтами
         return (cli_settings, env_settings, init_settings, dotenv_settings, file_secret_settings)
