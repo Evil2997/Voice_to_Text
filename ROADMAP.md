@@ -1,42 +1,56 @@
 # Roadmap
 
-## Current State
+## Done
 
-The project is a stable, production-ready CLI with clean architecture, deterministic caching, SQLite persistence, and a benchmark mode for finding optimal Whisper configurations. This is the foundation everything below builds on.
+**Clean Architecture**
+Domain ← Application ← Infrastructure with inverted dependencies through ports. No global state, composition root in `entrypoint.py`.
+
+**Deterministic caching**
+`run_key` covers all parameters that affect output. Cache is strict: txt on disk **and** run_key in SQLite — either alone is not enough.
+
+**Bench mode**
+Full parameter matrix (threads × workers × beam × vad), WER/CER scoring via jiwer, automatic best-config selection in `pick_best`.
+
+**Custom CLI parser**
+Nested keys (`--whisper.threads 8`, `--bench.beams 1,5,10`), type coercion, comma-separated tuples — no argparse dependency.
+
+**Unit tests**
+`selection.py` (`_to_float`, `pick_best`), `run_logic.py` (`make_run_key`, `resolve_compute_type`, txt naming), `targets.py` (`is_url`, `_hash`), `cli_source.py` (`_coerce_value`, `parse_argv`). Pure functions only, no mocking of infrastructure.
 
 ---
 
 ## Near Term
 
-**Tests**
-Unit tests for `run_logic.py` (cache hit/miss logic) and `selection.py` (pick_best ranking). These are pure functions with no I/O — straightforward to cover.
+**CI (GitHub Actions)**
+Run `uv run pytest` on push/PR. Approximately 10 lines of YAML. Moves the project from "has tests" to "tests are enforced". This is the minimum bar for any serious repo.
 
 **Packaging**
-- Proper `extras` in `pyproject.toml`: `faster-whisper` as optional, `jiwer` under `[bench]`
-- CLI entry point: `v2t` command instead of `python main.py`
-- `.python-version` file for reproducible environment
+- `[project.scripts]`: `v2t = "voice_to_text__app.main:main"` — so the tool runs as `v2t` instead of `python main.py`
+- `[dependency-groups]`: `dev = ["pytest>=8.0", "ruff>=0.4"]`
+- `extras`: `faster-whisper` as optional install, `jiwer` under `[bench]`
 
 **Code quality**
-- `ruff` for linting and formatting
-- `pre-commit` hooks
+- `ruff` for linting and formatting (replaces flake8 + black + isort in one tool)
+- `pre-commit` hooks: ruff + trailing whitespace + end-of-file
+
+**.python-version file**
+Pin `3.12` for reproducible `uv` environments.
 
 ---
 
 ## Medium Term
 
 **LLM post-processing layer**
-After transcription, pass the text through an LLM for:
-- Summarization
-- Structured extraction (topics, action items, key moments)
-- Cleanup of filler words and repetitions
-
-This requires a new `Transcript` domain entity and a `PostProcessor` port.
+After transcription, pass the text through an LLM for summarization, structured extraction (topics, action items, key moments), and cleanup of filler words. Requires a new `Transcript` domain entity and a `PostProcessor` port — the architecture already supports this pattern.
 
 **Hotwords / prompt support**
-For Russian speech with English technical terms, passing domain-specific vocabulary as Whisper `initial_prompt` or `hotwords` significantly improves accuracy without changing the model.
+For Russian speech with English technical terms, passing domain vocabulary as Whisper `initial_prompt` or `hotwords` improves accuracy without changing the model. Measurable via bench WER before/after.
 
-**Multilingual improvements**
-Evaluate `language="ru"` vs `language="auto"` on mixed Russian/English content. Auto-detect works per-segment on large models but explicit `ru` often wins for code-switching with anglicisms.
+**Multilingual evaluation**
+Benchmark `language="ru"` vs `language="auto"` on mixed Russian/English content. Auto-detect works per-segment on large models but explicit `ru` often wins for code-switching with anglicisms.
+
+**Integration into PDFnik**
+This tool is already used as a transcription microservice inside the PDFnik pipeline (`txt.transcribe`). Medium-term goal: formalize the interface so VTT can be updated independently without breaking PDFnik's contract.
 
 ---
 
@@ -52,19 +66,18 @@ Telegram message (audio/video)
   → Response back to Telegram
 ```
 
-**Infrastructure options**
+**Infrastructure scaling**
 - Redis for job queue and deduplication
 - Postgres instead of SQLite for multi-worker setups
 - Docker image with all dependencies (ffmpeg, yt-dlp, faster-whisper)
-- GitHub Actions for CI
 
 **CUDA support**
-Current bench matrix is CPU-only (int8). Extend matrix to include CUDA + float16 combinations when GPU is available.
+Current bench matrix is CPU-only (int8). Extend to include CUDA + float16 combinations when GPU is available. The matrix generator (`matrix.py`) already supports multiple compute types — only the defaults need extending.
 
 ---
 
 ## Non-Goals
 
-- Web UI (out of scope for this tool)
+- Web UI
 - Real-time / streaming transcription
 - Audio recording (input only, no capture)
