@@ -1,12 +1,23 @@
 [project]
 name = "Voice_in_to_text"
-version = "1.0.0"
+version = "1.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "faster-whisper>=1.2.1",
     "jiwer>=4.0.0",
-    "pydantic>=2.12.5",
     "pydantic-settings>=2.13.1",
+    "pydantic>=2.12.5",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
 ]
