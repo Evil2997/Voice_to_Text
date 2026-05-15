@@ -15,42 +15,49 @@ Full parameter matrix (threads × workers × beam × vad), WER/CER scoring via j
 Nested keys (`--whisper.threads 8`, `--bench.beams 1,5,10`), type coercion, comma-separated tuples — no argparse dependency.
 
 **Unit tests**
-`selection.py` (`_to_float`, `pick_best`), `run_logic.py` (`make_run_key`, `resolve_compute_type`, txt naming), `targets.py` (`is_url`, `_hash`), `cli_source.py` (`_coerce_value`, `parse_argv`). Pure functions only, no mocking of infrastructure.
+`selection.py`, `run_logic.py`, `targets.py`, `cli_source.py`, `Transcript` methods, all three chunking strategies. Pure functions only, no infrastructure mocking.
+
+**Structured transcript output**
+`TranscriptSegment` and `Transcript` domain entities. Whisper segments (start, end, text) are preserved instead of discarded. Each run produces four artifacts: `.txt`, `.json`, `.srt`, `.vtt`. `TranscribeEngine` port returns `Transcript` — change isolated behind the port.
+
+**CI (GitHub Actions)**
+`uv run pytest` runs on every push and pull request to `main`.
+
+**pre-commit**
+ruff + ruff-format + mypy hooks. Install: `uv run pre-commit install`.
+
+**Algorithmic chunking**
+Three strategies in `domain/chunking.py`, no AI required:
+- `chunk_by_pause` — splits on silence gaps between segments
+- `chunk_by_time` — fixed time windows
+- `chunk_by_words` — fixed word count windows (useful for controlling LLM token usage)
+
+Each chunk is a `TranscriptChunk` with `start`, `end`, `text`, `segment_count`.
 
 ---
 
 ## Near Term
 
-**CI (GitHub Actions)**
-Run `uv run pytest` on push/PR. Approximately 10 lines of YAML. Moves the project from "has tests" to "tests are enforced". This is the minimum bar for any serious repo.
+**LLM post-processing**
+With chunking in place, sending structured segments to an LLM is the natural next step. Each chunk is a self-contained unit with known boundaries — much better input than a flat string.
 
-**Packaging**
-- `[project.scripts]`: `v2t = "voice_to_text__app.main:main"` — so the tool runs as `v2t` instead of `python main.py`
-- `[dependency-groups]`: `dev = ["pytest>=8.0", "ruff>=0.4"]`
-- `extras`: `faster-whisper` as optional install, `jiwer` under `[bench]`
+Planned capabilities:
+- Summary per chunk and full transcript
+- Action item extraction
+- Key moment detection
+- Chapter / topic labeling
 
-**Code quality**
-- `ruff` for linting and formatting (replaces flake8 + black + isort in one tool)
-- `pre-commit` hooks: ruff + trailing whitespace + end-of-file
-
-**.python-version file**
-Pin `3.12` for reproducible `uv` environments.
+Requires a `PostProcessor` port and a new application-layer service. Domain stays unchanged.
 
 ---
 
 ## Medium Term
 
-**LLM post-processing layer**
-After transcription, pass the text through an LLM for summarization, structured extraction (topics, action items, key moments), and cleanup of filler words. Requires a new `Transcript` domain entity and a `PostProcessor` port — the architecture already supports this pattern.
-
-**Hotwords / prompt support**
-For Russian speech with English technical terms, passing domain vocabulary as Whisper `initial_prompt` or `hotwords` improves accuracy without changing the model. Measurable via bench WER before/after.
-
-**Multilingual evaluation**
-Benchmark `language="ru"` vs `language="auto"` on mixed Russian/English content. Auto-detect works per-segment on large models but explicit `ru` often wins for code-switching with anglicisms.
+**Search / RAG**
+Structured transcripts map naturally to vector indexes. Timestamp-aware retrieval enables queries like "at what moment did they discuss X?" over audio and video content.
 
 **Integration into PDFnik**
-This tool is already used as a transcription microservice inside the PDFnik pipeline (`txt.transcribe`). Medium-term goal: formalize the interface so VTT can be updated independently without breaking PDFnik's contract.
+VTT is already used as a transcription microservice inside PDFnik (`txt.transcribe`). `Transcript` becomes the shared contract between services, replacing the current plain-text hand-off.
 
 ---
 
@@ -61,7 +68,7 @@ This tool is already used as a transcription microservice inside the PDFnik pipe
 Telegram message (audio/video)
   → RabbitMQ queue
   → Worker (this tool)
-  → Transcription
+  → Transcript (structured)
   → LLM post-processing
   → Response back to Telegram
 ```
@@ -72,7 +79,7 @@ Telegram message (audio/video)
 - Docker image with all dependencies (ffmpeg, yt-dlp, faster-whisper)
 
 **CUDA support**
-Current bench matrix is CPU-only (int8). Extend to include CUDA + float16 combinations when GPU is available. The matrix generator (`matrix.py`) already supports multiple compute types — only the defaults need extending.
+Extend bench matrix to include CUDA + float16 combinations. `matrix.py` already supports multiple compute types — only the defaults need extending.
 
 ---
 
