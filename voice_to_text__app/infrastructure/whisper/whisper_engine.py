@@ -4,17 +4,16 @@ from typing import Optional
 
 from faster_whisper import WhisperModel
 
-from voice_to_text__app.domain.models import TranscribeConfig
+from voice_to_text__app.domain.models import Transcript, TranscribeConfig, TranscriptSegment
 
 logger = logging.getLogger(__name__)
 
 
 class WhisperEngine:
     """
-    Управляет lifecycle WhisperModel.
-    Гарантирует:
-    - модель создаётся 1 раз
-    - может переиспользоваться
+    Manages WhisperModel lifecycle.
+    - Model is created once and reused across runs.
+    - Reloads only when device or compute_type changes (never in bench mode).
     """
 
     def __init__(self, model_name: str):
@@ -29,9 +28,9 @@ class WhisperEngine:
         )
 
         if (
-                self._model
-                and self._device == cfg.device
-                and self._compute_type == compute
+            self._model
+            and self._device == cfg.device
+            and self._compute_type == compute
         ):
             return
 
@@ -53,11 +52,7 @@ class WhisperEngine:
         self._device = cfg.device
         self._compute_type = compute
 
-    def transcribe(
-            self,
-            wav_path: Path,
-            cfg: TranscribeConfig,
-    ) -> tuple[str, Optional[str]]:
+    def transcribe(self, wav_path: Path, cfg: TranscribeConfig) -> Transcript:
         if not self._model:
             self.load(cfg)
 
@@ -69,7 +64,13 @@ class WhisperEngine:
             language=None if cfg.lang == "auto" else cfg.lang,
         )
 
-        text = "".join(seg.text for seg in segments).strip()
-        detected = getattr(info, "language", None)
+        transcript_segments = [
+            TranscriptSegment(start=seg.start, end=seg.end, text=seg.text)
+            for seg in segments
+        ]
 
-        return text, detected
+        return Transcript(
+            segments=transcript_segments,
+            language=getattr(info, "language", None),
+            duration_sec=getattr(info, "duration", None),
+        )

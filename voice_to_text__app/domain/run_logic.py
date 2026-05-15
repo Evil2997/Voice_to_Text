@@ -1,11 +1,18 @@
 import hashlib
+import json
 import logging
 import time
 from pathlib import Path
 from typing import Optional
 
 from voice_to_text__app.domain.exceptions import TranscribeError
-from voice_to_text__app.domain.models import PreparedTarget, RunMetrics, RunResult, TranscribeConfig
+from voice_to_text__app.domain.models import (
+    PreparedTarget,
+    RunMetrics,
+    RunResult,
+    Transcript,
+    TranscribeConfig,
+)
 from voice_to_text__app.domain.ports.run_repository import RunRepository
 from voice_to_text__app.domain.ports.transcribe_engine import TranscribeEngine
 
@@ -58,6 +65,22 @@ def _to_float(x) -> Optional[float]:
         return None
 
 
+def _write_artifacts(out_txt: Path, transcript: Transcript) -> Path:
+    """Write .txt, .json, .srt, .vtt. Returns path to the json file."""
+    out_txt.write_text(transcript.to_text(), encoding="utf-8")
+
+    out_json = out_txt.with_suffix(".json")
+    out_json.write_text(
+        json.dumps(transcript.model_dump(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    out_txt.with_suffix(".srt").write_text(transcript.to_srt(), encoding="utf-8")
+    out_txt.with_suffix(".vtt").write_text(transcript.to_vtt(), encoding="utf-8")
+
+    return out_json
+
+
 def run_once(
         *,
         prepared: PreparedTarget,
@@ -69,15 +92,15 @@ def run_once(
         allow_skip: bool,
 ) -> RunResult:
     """
-    Один детерминированный прогон:
-    - вычисляет run_key
-    - применяет строгий кеш (txt exists + run_key in repo)
-    - при необходимости исполняет engine.transcribe(...)
-    - пишет артефакт txt
-    - фиксирует результат в repo
+    Single deterministic run:
+    - computes run_key
+    - applies strict cache (txt exists + run_key in repo)
+    - executes engine.transcribe() if needed
+    - writes .txt and .json artifacts
+    - persists result in repo
 
-    Важно: Domain зависит только от портов (RunRepository, TranscribeEngine),
-    а не от инфраструктуры (sqlite/whisper).
+    Domain depends only on ports (RunRepository, TranscribeEngine),
+    not on infrastructure (sqlite/whisper).
     """
     out_dir = out_dir.resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -90,6 +113,7 @@ def run_once(
         if bench_naming
         else txt_name_for_prod(prepared.base_name)
     )
+    out_json = out_txt.with_suffix(".json")
 
     # strict cache: txt exists + run_key in DB
     if allow_skip and out_txt.exists():
@@ -106,6 +130,7 @@ def run_once(
                 run_key=run_key,
                 target_id=prepared.target_id,
                 output_txt=Path(row.get("output_txt") or out_txt),
+                output_json=out_json if out_json.exists() else None,
                 detected_language=row.get("detected_language") or None,
                 metrics=metrics,
                 cached=True,
@@ -117,10 +142,10 @@ def run_once(
 
     t0 = time.perf_counter()
     try:
-        text, detected = engine.transcribe(prepared.wav_path, cfg)
+        transcript: Transcript = engine.transcribe(prepared.wav_path, cfg)
         wall = time.perf_counter() - t0
 
-        out_txt.write_text(text, encoding="utf-8")
+        _write_artifacts(out_txt, transcript)
 
         audio_dur = prepared.audio_duration_sec
         rtf = (wall / audio_dur) if (audio_dur and audio_dur > 0) else None
@@ -143,7 +168,7 @@ def run_once(
                 "patience": cfg.patience,
                 "vad": int(cfg.vad),
                 "lang": cfg.lang,
-                "detected_language": detected or "",
+                "detected_language": transcript.language or "",
                 "wall_time_sec": wall,
                 "audio_duration_sec": audio_dur,
                 "rtf": rtf,
@@ -154,7 +179,8 @@ def run_once(
             run_key=run_key,
             target_id=prepared.target_id,
             output_txt=out_txt,
-            detected_language=detected,
+            output_json=out_json,
+            detected_language=transcript.language,
             metrics=metrics,
             cached=False,
             status="ok",
@@ -162,8 +188,6 @@ def run_once(
         )
 
     except Exception as e:
-        # Доменные исключения должны оставаться доменными
-        # Инфра-движок может бросить что угодно -> завернём в TranscribeError
         err = e if isinstance(e, TranscribeError) else TranscribeError(str(e))
 
         wall = time.perf_counter() - t0
@@ -199,6 +223,7 @@ def run_once(
             run_key=run_key,
             target_id=prepared.target_id,
             output_txt=out_txt,
+            output_json=None,
             detected_language=None,
             metrics=metrics,
             cached=False,
