@@ -2,7 +2,7 @@
 
 CLI tool for transcribing audio and video to text using [faster-whisper](https://github.com/SYSTRAN/faster-whisper).
 
-Supports local files and YouTube URLs. Two modes: fast single-file transcription (`prod`) and full parameter matrix search for finding the optimal configuration (`bench`).
+Supports local files and YouTube URLs. Two modes: fast single-file transcription (`prod`) and full parameter matrix search for finding the optimal Whisper configuration (`bench`).
 
 ---
 
@@ -13,6 +13,8 @@ Supports local files and YouTube URLs. Two modes: fast single-file transcription
 - Deterministic cache based on `run_key` — same file with same parameters never runs twice
 - SQLite for storing all runs with metrics (wall time, RTF, WER, CER)
 - `bench` mode: parameter matrix (threads × workers × beam × vad), WER/CER scoring via jiwer, automatic best-config selection
+- **Structured output**: every run produces `.txt`, `.json` (with timestamps), `.srt` and `.vtt` subtitle files
+- **Chunking**: split transcripts into logical blocks by pause, time window, or word count
 - Clean Architecture: Domain ← Application ← Infrastructure, dependencies inverted through ports
 - Custom CLI parser with nested keys (`--whisper.threads 8`) — no argparse
 
@@ -46,7 +48,7 @@ pip install yt-dlp
 ```bash
 git clone https://github.com/Evil2997/voice-to-text-cli.git
 cd voice-to-text-cli
-uv sync
+uv sync --extra whisper
 ```
 
 ---
@@ -57,13 +59,13 @@ uv sync
 
 ```bash
 # Local file
-uv run python main.py --mode prod --target ./audio.mp3
+uv run v2t --mode prod --target ./audio.mp3
 
 # YouTube
-uv run python main.py --mode prod --target "https://youtu.be/..."
+uv run v2t --mode prod --target "https://youtu.be/..."
 
 # Override model and device
-uv run python main.py --mode prod --target ./audio.mp3 \
+uv run v2t --mode prod --target ./audio.mp3 \
   --whisper.model large-v3 \
   --whisper.device cpu \
   --whisper.threads 8
@@ -73,10 +75,10 @@ uv run python main.py --mode prod --target ./audio.mp3 \
 
 ```bash
 # Default matrix
-uv run python main.py --mode bench --target ./audio.mp3 --bench.ref ./ref.txt
+uv run v2t --mode bench --target ./audio.mp3 --bench.ref ./ref.txt
 
 # Custom matrix
-uv run python main.py --mode bench \
+uv run v2t --mode bench \
   --target ./audio.mp3 \
   --bench.threads 4,8,12 \
   --bench.beams 1,5,10 \
@@ -85,6 +87,59 @@ uv run python main.py --mode bench \
 ```
 
 `ref.txt` is the reference transcript for WER/CER scoring. Without it bench still runs but selects the best config by speed only.
+
+---
+
+## Output formats
+
+Every transcription run produces four files side by side:
+
+| File | Content |
+|---|---|
+| `<name>.txt` | Plain text transcript |
+| `<name>.json` | Structured transcript with segment timestamps |
+| `<name>.srt` | SubRip subtitles |
+| `<name>.vtt` | WebVTT subtitles |
+
+Example `.json` output:
+
+```json
+{
+  "segments": [
+    { "start": 0.0, "end": 3.2, "text": "Hello, how are you?" },
+    { "start": 3.5, "end": 7.1, "text": "I wanted to discuss the project." }
+  ],
+  "language": "en",
+  "duration_sec": 7.1
+}
+```
+
+---
+
+## Chunking
+
+Split a transcript into logical blocks without any AI — pure algorithmic, based on segment boundaries already provided by Whisper.
+
+Three strategies:
+
+| Strategy | Parameter | Description |
+|---|---|---|
+| `pause` | `min_pause_sec` (default: 1.5s) | New chunk on silence gap between segments |
+| `time` | `window_sec` (default: 30s) | Fixed time windows |
+| `words` | `max_words` (default: 100) | Fixed word count windows |
+
+```python
+from voice_to_text__app.domain.chunking import chunk_by_pause, chunk_by_time, chunk_by_words
+
+chunks = chunk_by_pause(transcript, min_pause_sec=2.0)
+chunks = chunk_by_time(transcript, window_sec=60)
+chunks = chunk_by_words(transcript, max_words=150)
+
+for chunk in chunks:
+    print(f"[{chunk.start:.1f}s → {chunk.end:.1f}s] {chunk.text}")
+```
+
+Each chunk is a `TranscriptChunk` with `start`, `end`, `text`, `segment_count`.
 
 ---
 
@@ -112,8 +167,11 @@ Default `./workspace` (configurable via `--out-dir`):
 workspace/
 ├── prepared/                        # normalized WAV cache
 ├── sample/                          # bench samples
-├── full_120__abc123.txt             # prod transcription result
-├── full_120_sample_120__def456.txt  # bench results (one per config)
+├── audio.txt                        # plain text transcript
+├── audio.json                       # structured transcript with timestamps
+├── audio.srt                        # SubRip subtitles
+├── audio.vtt                        # WebVTT subtitles
+├── audio__<run_id>.txt              # bench results (one set per config)
 ├── runs.sqlite                      # prod run history
 └── bench.sqlite                     # bench run history + metrics
 ```
@@ -133,12 +191,13 @@ A run is considered cached only if **both** the `.txt` file exists on disk **and
 ```
 voice_to_text__app/
 ├── domain/
-│   ├── models.py                    # PreparedTarget, TranscribeConfig, RunResult
+│   ├── models.py                    # PreparedTarget, TranscribeConfig, Transcript, RunResult
 │   ├── exceptions.py
 │   ├── run_logic.py                 # single-run logic: cache, transcribe, persist
+│   ├── chunking.py                  # chunk_by_pause / chunk_by_time / chunk_by_words
 │   └── ports/
 │       ├── run_repository.py        # Protocol: get / upsert / list_all
-│       ├── transcribe_engine.py     # Protocol: transcribe(wav, cfg)
+│       ├── transcribe_engine.py     # Protocol: transcribe(wav, cfg) -> Transcript
 │       └── target_preparer.py       # Protocol: prepare / make_sample
 ├── application/
 │   ├── prod/
