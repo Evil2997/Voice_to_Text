@@ -1,14 +1,34 @@
 [project]
-name = "Voice_in_to_text"
+name = "voice-to-text"
 version = "1.1.0"
-description = "Add your description here"
+description = "CLI tool for audio/video transcription with structured segment output. Supports local files and YouTube URLs, deterministic caching, benchmark mode, and structured JSON/SRT/VTT export."
 readme = "README.md"
 requires-python = ">=3.12"
+authors = [
+    { name = "Evil2997", email = "dima.molchanow2012@gmail.com" },
+]
 dependencies = [
-    "faster-whisper>=1.2.1",
-    "jiwer>=4.0.0",
-    "pydantic-settings>=2.13.1",
     "pydantic>=2.12.5",
+    "pydantic-settings>=2.13.1",
+]
+
+[project.optional-dependencies]
+whisper = [
+    "faster-whisper>=1.2.1",
+]
+bench = [
+    "jiwer>=4.0.0",
+]
+
+[project.scripts]
+v2t = "voice_to_text__app.main:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.4.4",
+    "mypy>=1.10.0",
+    "pre-commit>=3.7",
 ]
 
 [tool.pytest.ini_options]
@@ -17,7 +37,15 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 
-[dependency-groups]
-dev = [
-    "pytest>=8.0",
-]
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+ignore_missing_imports = true
